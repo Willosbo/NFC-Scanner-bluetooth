@@ -1,89 +1,63 @@
-// #include <Arduino.h>
-// //Here is an example of two-way serial communication with a BLE device using an Arduino:
-// #include <SoftwareSerial.h>
 
-// SoftwareSerial BTSerial(10, 11); // RX, TX
+/* 
+ * SETUP INSTRUCTIONS:
+ * 
+ * 1. Install the "ESP32 BLE Keyboard" library by T-vK
+ *    In Arduino IDE: Sketch -> Include Library -> Manage Libraries
+ *    Search for "ESP32 BLE Keyboard" and install it
+ * 
+ * 2. Select board: "ESP32C3 Dev Module" or "XIAO_ESP32C3"
+ * 
+ * 3. Connect the ESP32C3 to your device:
+ *    - On Windows: Settings -> Bluetooth & Devices -> Add Device
+ *    - On Mac: System Preferences -> Bluetooth
+ *    - On Linux: Bluetooth settings
+ *    - Look for "ESP32C3 Keyboard" and pair
+ * 
+ * BLUETOOTH KEYBOARD USAGE:
+ * 
+ * Check connection:
+ * - bleKeyboard.isConnected()  - Returns true if connected
+ * 
+ * Basic text typing:
+ * - bleKeyboard.print("text")     - Types text without newline
+ * - bleKeyboard.println("text")   - Types text with Enter key
+ * - bleKeyboard.write('a')        - Types a single character
+ * 
+ * Key press and release:
+ * - bleKeyboard.press(key)        - Press and hold a key
+ * - bleKeyboard.release(key)      - Release a specific key
+ * - bleKeyboard.releaseAll()      - Release all keys
+ * 
+ * Special Keys:
+ * - KEY_LEFT_CTRL, KEY_RIGHT_CTRL
+ * - KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT
+ * - KEY_LEFT_ALT, KEY_RIGHT_ALT
+ * - KEY_LEFT_GUI, KEY_RIGHT_GUI (Windows/CMD key)
+ * - KEY_UP_ARROW, KEY_DOWN_ARROW, KEY_LEFT_ARROW, KEY_RIGHT_ARROW
+ * - KEY_BACKSPACE, KEY_TAB, KEY_RETURN (Enter), KEY_ESC
+ * - KEY_INSERT, KEY_DELETE, KEY_PAGE_UP, KEY_PAGE_DOWN
+ * - KEY_HOME, KEY_END, KEY_CAPS_LOCK
+ * - KEY_F1 through KEY_F24
+ * 
+ * Media Keys:
+ * - KEY_MEDIA_PLAY_PAUSE
+ * - KEY_MEDIA_NEXT_TRACK
+ * - KEY_MEDIA_PREVIOUS_TRACK
+ * - KEY_MEDIA_VOLUME_UP
+ * - KEY_MEDIA_VOLUME_DOWN
+ * - KEY_MEDIA_MUTE
+ * 
+ * Example - Ctrl+C (Copy):
+ * bleKeyboard.press(KEY_LEFT_CTRL);
+ * bleKeyboard.press('c');
+ * delay(100);
+ * bleKeyboard.releaseAll();
+ * 
+ * Battery Level (optional):
+ * bleKeyboard.setBatteryLevel(85); // Set battery level 0-100%
+ */
 
-// void setup() {
-//   BTSerial.begin(9600);  // The HC-05 default speed is 9600
-//   Serial.begin(9600);  // Display the data to the serial monitor
-// }
-
-// void loop() {
-//   // Check if there is any data available from the Bluetooth module
-//   if (BTSerial.available()) {
-//     // Read the data from the Bluetooth module
-//     char c = BTSerial.read();
-//     // Display the data to the serial monitor
-//     Serial.print(c);
-//   }
-
-//   // Check if there is any data available from the serial monitor
-//   if (Serial.available()) {
-//     // Read the data from the serial monitor
-//     char c = Serial.read();
-//     // Send the data to the Bluetooth module
-//     BTSerial.print(c);
-//   }
-//} 
-//This code will create a software serial port on pins 10 and 11, which will be used to communicate with the BLE device. The baud rate is set to 9600, which is the default baud rate for the HC-05 Bluetooth module.
-//In the loop function, the code first checks if there is any data available from the Bluetooth module. If there is, the code reads the data and displays it to the serial monitor. Next, the code checks if there is any data available from the serial monitor. If there is, the code reads the data and sends it to the Bluetooth module.
-//This code can be used to send and receive data between an Arduino and a BLE device. For example, you could use this code to control a robot or other device with your smartphone.#include <BLEDevice.h>
-
-// #include <BLEDevice.h>
-// #include <BLEUtils.h>
-// #include <BLEServer.h>
-
-// // See the following for generating UUIDs:
-// // https://www.uuidgenerator.net/
-
-// #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-// #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-
-
-// class MyCallbacks: public BLECharacteristicCallbacks {
-//     void onWrite(BLECharacteristic *pCharacteristic) {
-//       std::string value = pCharacteristic->getValue();
-
-//       if (value.length() > 0) {
-//         Serial.println("*********");
-//         Serial.print("New value: ");
-//         for (int i = 0; i < value.length(); i++)
-//           Serial.print(value[i]);
-
-//         Serial.println();
-//         Serial.println("*********");
-//       }
-//     }
-// };
-
-// void setup() {
-//   Serial.begin(115200);
-
-//   BLEDevice::init("MyESP32");
-//   BLEServer *pServer = BLEDevice::createServer();
-
-//   BLEService *pService = pServer->createService(SERVICE_UUID);
-
-//   BLECharacteristic *pCharacteristic = pService->createCharacteristic(
-//                                          CHARACTERISTIC_UUID,
-//                                          BLECharacteristic::PROPERTY_READ |
-//                                          BLECharacteristic::PROPERTY_WRITE
-//                                        );
-
-//   pCharacteristic->setCallbacks(new MyCallbacks());
-
-//   pCharacteristic->setValue("Hello World");
-//   pService->start();
-
-//   BLEAdvertising *pAdvertising = pServer->getAdvertising();
-//   pAdvertising->start();
-// }
-
-// void loop() {
-//   // put your main code here, to run repeatedly:
-//   delay(2000);
-// }
 #include <Arduino.h>
 #include <BleKeyboard.h>
 
@@ -298,63 +272,4 @@ void loop() {
  * bleKeyboard.print("Field2");
  * delay(50);
  * bleKeyboard.write(KEY_RETURN);
- */
-
-/* 
- * SETUP INSTRUCTIONS:
- * 
- * 1. Install the "ESP32 BLE Keyboard" library by T-vK
- *    In Arduino IDE: Sketch -> Include Library -> Manage Libraries
- *    Search for "ESP32 BLE Keyboard" and install it
- * 
- * 2. Select board: "ESP32C3 Dev Module" or "XIAO_ESP32C3"
- * 
- * 3. Connect the ESP32C3 to your device:
- *    - On Windows: Settings -> Bluetooth & Devices -> Add Device
- *    - On Mac: System Preferences -> Bluetooth
- *    - On Linux: Bluetooth settings
- *    - Look for "ESP32C3 Keyboard" and pair
- * 
- * BLUETOOTH KEYBOARD USAGE:
- * 
- * Check connection:
- * - bleKeyboard.isConnected()  - Returns true if connected
- * 
- * Basic text typing:
- * - bleKeyboard.print("text")     - Types text without newline
- * - bleKeyboard.println("text")   - Types text with Enter key
- * - bleKeyboard.write('a')        - Types a single character
- * 
- * Key press and release:
- * - bleKeyboard.press(key)        - Press and hold a key
- * - bleKeyboard.release(key)      - Release a specific key
- * - bleKeyboard.releaseAll()      - Release all keys
- * 
- * Special Keys:
- * - KEY_LEFT_CTRL, KEY_RIGHT_CTRL
- * - KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT
- * - KEY_LEFT_ALT, KEY_RIGHT_ALT
- * - KEY_LEFT_GUI, KEY_RIGHT_GUI (Windows/CMD key)
- * - KEY_UP_ARROW, KEY_DOWN_ARROW, KEY_LEFT_ARROW, KEY_RIGHT_ARROW
- * - KEY_BACKSPACE, KEY_TAB, KEY_RETURN (Enter), KEY_ESC
- * - KEY_INSERT, KEY_DELETE, KEY_PAGE_UP, KEY_PAGE_DOWN
- * - KEY_HOME, KEY_END, KEY_CAPS_LOCK
- * - KEY_F1 through KEY_F24
- * 
- * Media Keys:
- * - KEY_MEDIA_PLAY_PAUSE
- * - KEY_MEDIA_NEXT_TRACK
- * - KEY_MEDIA_PREVIOUS_TRACK
- * - KEY_MEDIA_VOLUME_UP
- * - KEY_MEDIA_VOLUME_DOWN
- * - KEY_MEDIA_MUTE
- * 
- * Example - Ctrl+C (Copy):
- * bleKeyboard.press(KEY_LEFT_CTRL);
- * bleKeyboard.press('c');
- * delay(100);
- * bleKeyboard.releaseAll();
- * 
- * Battery Level (optional):
- * bleKeyboard.setBatteryLevel(85); // Set battery level 0-100%
  */

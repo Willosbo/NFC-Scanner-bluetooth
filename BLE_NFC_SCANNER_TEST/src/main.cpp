@@ -1,275 +1,186 @@
-
-/* 
- * SETUP INSTRUCTIONS:
- * 
- * 1. Install the "ESP32 BLE Keyboard" library by T-vK
- *    In Arduino IDE: Sketch -> Include Library -> Manage Libraries
- *    Search for "ESP32 BLE Keyboard" and install it
- * 
- * 2. Select board: "ESP32C3 Dev Module" or "XIAO_ESP32C3"
- * 
- * 3. Connect the ESP32C3 to your device:
- *    - On Windows: Settings -> Bluetooth & Devices -> Add Device
- *    - On Mac: System Preferences -> Bluetooth
- *    - On Linux: Bluetooth settings
- *    - Look for "ESP32C3 Keyboard" and pair
- * 
- * BLUETOOTH KEYBOARD USAGE:
- * 
- * Check connection:
- * - bleKeyboard.isConnected()  - Returns true if connected
- * 
- * Basic text typing:
- * - bleKeyboard.print("text")     - Types text without newline
- * - bleKeyboard.println("text")   - Types text with Enter key
- * - bleKeyboard.write('a')        - Types a single character
- * 
- * Key press and release:
- * - bleKeyboard.press(key)        - Press and hold a key
- * - bleKeyboard.release(key)      - Release a specific key
- * - bleKeyboard.releaseAll()      - Release all keys
- * 
- * Special Keys:
- * - KEY_LEFT_CTRL, KEY_RIGHT_CTRL
- * - KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT
- * - KEY_LEFT_ALT, KEY_RIGHT_ALT
- * - KEY_LEFT_GUI, KEY_RIGHT_GUI (Windows/CMD key)
- * - KEY_UP_ARROW, KEY_DOWN_ARROW, KEY_LEFT_ARROW, KEY_RIGHT_ARROW
- * - KEY_BACKSPACE, KEY_TAB, KEY_RETURN (Enter), KEY_ESC
- * - KEY_INSERT, KEY_DELETE, KEY_PAGE_UP, KEY_PAGE_DOWN
- * - KEY_HOME, KEY_END, KEY_CAPS_LOCK
- * - KEY_F1 through KEY_F24
- * 
- * Media Keys:
- * - KEY_MEDIA_PLAY_PAUSE
- * - KEY_MEDIA_NEXT_TRACK
- * - KEY_MEDIA_PREVIOUS_TRACK
- * - KEY_MEDIA_VOLUME_UP
- * - KEY_MEDIA_VOLUME_DOWN
- * - KEY_MEDIA_MUTE
- * 
- * Example - Ctrl+C (Copy):
- * bleKeyboard.press(KEY_LEFT_CTRL);
- * bleKeyboard.press('c');
- * delay(100);
- * bleKeyboard.releaseAll();
- * 
- * Battery Level (optional):
- * bleKeyboard.setBatteryLevel(85); // Set battery level 0-100%
- */
-
 #include <Arduino.h>
+
+#ifndef USE_NIMBLE
+#define USE_NIMBLE
+#endif
+
+#include <NimBLEDevice.h>
 #include <BleKeyboard.h>
 
-// Create Bluetooth Keyboard with custom name
-BleKeyboard bleKeyboard("NFC_SCANNER", "SEEED", 100);
+BleKeyboard bleKeyboard("NFC_Scanner", "SeeedStudio", 100);
 
-bool wasConnected = false;
-unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL = 10000; // 10 seconds
+#define AUDIO_PIN_POSITIVE 3
+#define AUDIO_PIN_NEGATIVE 4
 
-// Ultra-reliable typing with forced key releases
-void typeReliablySafe(const char* text, int charDelay = 15) {
-  // First, ensure all keys are released before starting
-  bleKeyboard.releaseAll();
-  delay(50);
-  
-  for(int i = 0; text[i] != '\0'; i++) {
-    // Check if still connected before each character
-    if(!bleKeyboard.isConnected()) {
-      Serial.println("Connection lost during typing!");
-      bleKeyboard.releaseAll(); // Emergency release
-      return;
-    }
-    
-    // Write character and immediately release
-    bleKeyboard.press(text[i]);
-    delay(charDelay);
-    bleKeyboard.release(text[i]);
-    delay(charDelay); // Double delay for reliability
-  }
-  
-  // Final safety release
-  bleKeyboard.releaseAll();
-  delay(50);
-}
+enum State {
+  TURN_ON_CARD_SEARCH_COMMAND,
+  TURN_ON_CARD_SEARCH_CONFIRM,
+  SEARCH_FOR_CARD,
+  GET_SERIAL_COMMAND,
+  WAIT_FOR_SERIAL,
+  KEYBOARD_OUTPUT,
+};
 
-// Safe Enter key press
-void pressEnterSafe() {
-  if(!bleKeyboard.isConnected()) return;
-  
-  bleKeyboard.press(KEY_RETURN);
-  delay(50);
-  bleKeyboard.release(KEY_RETURN);
-  delay(50);
-  bleKeyboard.releaseAll(); // Extra safety
-  delay(100);
-}
+State current_state = TURN_ON_CARD_SEARCH_COMMAND;
+byte uid[8]{};
+byte last_uid[8]{}; 
+byte serial_number[14]{};
+int readable_string_length = 0;
+unsigned long state_time;
+unsigned long last_scan_time = 0;
+const int TIMEOUT_LIMIT = 300; // More forgiving for hardware latency
+
+void ClearSerial();
+int RemoveNonReadableChars(byte *source, int source_len, byte *destination);
+void AddCheckSumXOR(byte *data, int len);
+void beep();
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Starting BLE Keyboard!");
+  setCpuFrequencyMhz(160);
   
-  // Start Bluetooth Keyboard
+  // XIAO ESP32-C3 Pins: 21=TX, 20=RX
+  Serial1.begin(19200, SERIAL_8N1, 20, 21);
+  Serial1.setTimeout(50); 
+  
+  pinMode(AUDIO_PIN_POSITIVE, OUTPUT);
+  pinMode(AUDIO_PIN_NEGATIVE, OUTPUT);
+  
   bleKeyboard.begin();
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9); 
   
-  // Wait for connection
-  Serial.println("Waiting for connection...");
+  delay(500);
+  beep(); // Confirm boot
 }
 
 void loop() {
-  bool isConnected = bleKeyboard.isConnected();
+  State next_state = current_state;
   
-  // Detect new connection
-  if(isConnected && !wasConnected) {
-    Serial.println("Device connected!");
-    wasConnected = true;
-    lastSendTime = millis();
-    
-    // Wait for connection to stabilize
-    delay(3000); // Increased to 3 seconds
-    
-    // Emergency release all keys on new connection
-    bleKeyboard.releaseAll();
-    delay(100);
-    
-    // Send greeting only once per connection
-    Serial.println("Sending hello message...");
-    typeReliablySafe("Hello from ESP32C3 Bluetooth Keyboard!");
-    pressEnterSafe();
-    Serial.println("Hello message sent successfully");
-  }
-  
-  // Detect disconnection
-  if(!isConnected && wasConnected) {
-    Serial.println("Device disconnected!");
-    wasConnected = false;
-    
-    // Emergency release all keys on disconnect
-    bleKeyboard.releaseAll();
-  }
-  
-  // Only send data when connected and enough time has passed
-  if(isConnected && wasConnected) {
-    unsigned long currentTime = millis();
-    
-    // Check if it's time to send
-    if(currentTime - lastSendTime >= SEND_INTERVAL) {
-      // Double-check connection before sending
-      if(bleKeyboard.isConnected()) {
-        Serial.println("Sending serial number...");
-        
-        // Emergency release before typing
-        bleKeyboard.releaseAll();
-        delay(50);
-        
-        typeReliablySafe("Serial Number ", 15);
-        pressEnterSafe();
-        
-        Serial.println("Serial number sent successfully");
-        lastSendTime = currentTime;
-      } else {
-        Serial.println("Connection lost, skipping send");
-      }
+  switch (current_state) {
+    case TURN_ON_CARD_SEARCH_COMMAND: {
+      ClearSerial();
+      byte turn_on_search_command[6] = {0x00, 0x00, 0x03, 0x02, 0x03, 0x02};
+      Serial1.write(turn_on_search_command, 6);
+      state_time = millis();
+      next_state = SEARCH_FOR_CARD; // Jump straight to searching
+      break;
     }
     
-    delay(100); // Small delay in loop
-  } else {
-    // Not connected, just wait
-    delay(1000);
+    case SEARCH_FOR_CARD: {
+      // Reduced delay to 20ms - just enough for the radio to settle
+      if (millis() - state_time > 20) { 
+        if (Serial1.available() >= 5) {
+          byte res[20];
+          int len = Serial1.readBytes(res, 20);
+          
+          for(int i = 0; i < len - 5; i++) {
+            if (res[i+2] == 0x11) {
+              byte current_uid[8];
+              memcpy(current_uid, &res[i+5], 8);
+              
+              // Reduced re-scan lockout to 500ms for rapid scanning
+              if (memcmp(current_uid, last_uid, 8) != 0 || (millis() - last_scan_time > 200)) {
+                memcpy(uid, current_uid, 8);
+                memcpy(last_uid, current_uid, 8);
+                next_state = GET_SERIAL_COMMAND;
+                break; 
+              }
+            }
+          }
+        }
+      }
+      // Faster refresh of the search command
+      if ((millis() - state_time) > 800) next_state = TURN_ON_CARD_SEARCH_COMMAND;
+      break;
+    }
+    
+    case GET_SERIAL_COMMAND: {
+      ClearSerial();
+      byte readblocks_command[15] = {0x00, 0x00, 0x0C, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x06, 0x00};
+      memcpy(readblocks_command + 4, uid, 8);
+      AddCheckSumXOR(readblocks_command, 15);
+      Serial1.write(readblocks_command, 15);
+      state_time = millis();
+      next_state = WAIT_FOR_SERIAL;
+      break;
+    }
+    
+    case WAIT_FOR_SERIAL: {
+      if (Serial1.available() >= 4) {
+        byte res[30];
+        int len = Serial1.readBytes(res, 30);
+        for(int i = 0; i < len - 4; i++) {
+          if (res[i+2] == 0x23) {
+            byte raw_data[14];
+            memcpy(raw_data, &res[i+4], 14); 
+            readable_string_length = RemoveNonReadableChars(raw_data, 14, serial_number);
+            next_state = KEYBOARD_OUTPUT;
+            break;
+          }
+        }
+      }
+      if ((millis() - state_time) > TIMEOUT_LIMIT) next_state = TURN_ON_CARD_SEARCH_COMMAND;
+      break;
+    }
+    
+    case KEYBOARD_OUTPUT: {
+      beep(); // Buzz to show the scan was successful
+      
+      if (bleKeyboard.isConnected()) {
+        delay(300); // Give PC/Laptop time to focus
+        for(int i = 0; i < readable_string_length; i++) {
+          bleKeyboard.write(serial_number[i]);
+          delay(20); // Safe typing speed
+        }
+        bleKeyboard.write(KEY_RETURN);
+      }
+      
+      last_scan_time = millis();
+      delay(100); // Short cooldown
+      next_state = TURN_ON_CARD_SEARCH_COMMAND;
+      break;
+    }
   }
+  
+  current_state = next_state;
+  delay(10); // Prevent CPU "spinning" too fast
 }
 
-/* 
- * SIGNAL SAFETY FEATURES ADDED:
- * 
- * 1. Explicit press() and release() for each character
- *    - Prevents keys getting stuck in pressed state
- *    - Each character is guaranteed to release
- * 
- * 2. Double delays (charDelay between press and release, then another after)
- *    - Gives BLE stack time to process packets
- *    - Prevents buffer overflow
- * 
- * 3. Connection checking during typing
- *    - Aborts mid-typing if connection drops
- *    - Emergency releaseAll() if disconnection detected
- * 
- * 4. releaseAll() called at critical points:
- *    - Before starting any text
- *    - After completing any text
- *    - On new connection
- *    - On disconnection
- *    - After every Enter key
- * 
- * 5. Longer stabilization delay (3 seconds after connection)
- * 
- * 6. Time-based sending instead of delay()
- *    - Prevents issues if loop gets delayed
- * 
- * RECOMMENDATIONS FOR MOVING AROUND:
- * - Stay within 5-10 meters of the paired device
- * - Avoid walls, metal objects between devices
- * - Don't send data while moving - wait until stationary
- * - If you need longer range, increase charDelay to 20-30ms
- * 
- * FOR NFC USE:
- * Replace the timed sending with your NFC trigger:
- * 
- * if(nfcCardDetected && bleKeyboard.isConnected()) {
- *   bleKeyboard.releaseAll();
- *   delay(50);
- *   typeReliablySafe(nfcData, 15);
- *   pressEnterSafe();
- * }
- */
-/* 
- * FIXED RELIABILITY ISSUES:
- * - Added typeReliably() function that sends ONE character at a time
- * - 10ms delay between each character prevents packet loss
- * - 100ms delay after Enter key for better stability
- * - Prevents character drops like "Seria Number" or "Serial NSerial"
- * 
- * TUNING THE DELAYS:
- * If still getting errors, increase charDelay:
- * - typeReliably("text", 15); // 15ms between chars (slower but more reliable)
- * - typeReliably("text", 20); // 20ms between chars (very reliable)
- * - typeReliably("text", 5);  // 5ms between chars (faster but less reliable)
- * 
- * For NFC scanner use:
- * 
- * if(nfcDataAvailable) {
- *   typeReliably(nfcSerialNumber, 10);
- *   delay(50);
- *   bleKeyboard.write(KEY_RETURN);
- *   delay(100);
- * }
- * 
- * ADDITIONAL TIPS:
- * - Keep strings under 50 characters for best reliability
- * - For longer data, add delays every 20-30 characters
- * - Some devices work better with 15-20ms character delays
- */
+// --- DO NOT REMOVE THESE FUNCTIONS ---
 
-/* 
- * IMPROVED RELIABILITY FEATURES:
- * - Increased initial connection delay to 2000ms
- * - Using print() + write(KEY_RETURN) instead of println()
- * - Added 50ms delays between text and Enter key
- * - Proper timing between BLE operations
- * 
- * For sending NFC data reliably, use this pattern:
- * 
- * bleKeyboard.print("Your NFC data here");
- * delay(50);
- * bleKeyboard.write(KEY_RETURN);
- * 
- * For key combinations (like Tab between fields):
- * bleKeyboard.print("Field1");
- * delay(50);
- * bleKeyboard.write(KEY_TAB);
- * delay(50);
- * bleKeyboard.print("Field2");
- * delay(50);
- * bleKeyboard.write(KEY_RETURN);
- */
+void ClearSerial() {
+  while (Serial1.available() > 0) Serial1.read();
+}
+
+int RemoveNonReadableChars(byte *source, int source_len, byte *destination) {
+  int length_of_readable_chars = 0;
+  for (int i = 0; i < source_len; i++) {
+    if (source[i] >= 0x20 && source[i] <= 0x7E) {
+      destination[length_of_readable_chars] = source[i];
+      length_of_readable_chars++;
+    }
+  }
+  return length_of_readable_chars;
+}
+
+void AddCheckSumXOR(byte *data, int len) {
+  byte check_sum = 0;
+  for (byte i = 0; i < len; i++) check_sum ^= data[i];
+  data[len - 1] = check_sum;
+}
+
+void beep() {
+  const int beepFreq = 2500;
+  const int beepDuration = 150;
+  int halfPeriod = 1000000 / (beepFreq * 2);
+  int cycles = (beepDuration * 1000) / (halfPeriod * 2);
+  for(int i = 0; i < cycles; i++) {
+    digitalWrite(AUDIO_PIN_POSITIVE, HIGH);
+    digitalWrite(AUDIO_PIN_NEGATIVE, LOW);
+    delayMicroseconds(halfPeriod);
+    digitalWrite(AUDIO_PIN_POSITIVE, LOW);
+    digitalWrite(AUDIO_PIN_NEGATIVE, HIGH);
+    delayMicroseconds(halfPeriod);
+  }
+  digitalWrite(AUDIO_PIN_POSITIVE, LOW);
+  digitalWrite(AUDIO_PIN_NEGATIVE, LOW);
+}

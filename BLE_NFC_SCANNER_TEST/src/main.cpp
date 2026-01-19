@@ -7,10 +7,16 @@
 #include <NimBLEDevice.h>
 #include <BleKeyboard.h>
 
-BleKeyboard bleKeyboard("NFC_Scanner", "SeeedStudio", 100);
+BleKeyboard bleKeyboard("NFC_Scanner_2", "SeeedStudio", 100);
 
-#define AUDIO_PIN_POSITIVE 3
-#define AUDIO_PIN_NEGATIVE 4
+#define AUDIO_PIN_POSITIVE 2
+#define AUDIO_PIN_NEGATIVE 3
+#define BATTERY_PIN 4  // ADC Pin for battery monitoring
+
+// --- Battery Constants ---
+const float max_battery_voltage = 4.2; // Full charge
+const float min_battery_voltage = 3.3; // Cutoff
+unsigned long last_battery_check = 0;
 
 enum State {
   TURN_ON_CARD_SEARCH_COMMAND,
@@ -28,31 +34,40 @@ byte serial_number[14]{};
 int readable_string_length = 0;
 unsigned long state_time;
 unsigned long last_scan_time = 0;
-const int TIMEOUT_LIMIT = 300; // More forgiving for hardware latency
+const int TIMEOUT_LIMIT = 300; 
 
+// Prototypes
 void ClearSerial();
 int RemoveNonReadableChars(byte *source, int source_len, byte *destination);
 void AddCheckSumXOR(byte *data, int len);
 void beep();
+void updateBatteryLevel();
 
 void setup() {
   setCpuFrequencyMhz(160);
   
-  // XIAO ESP32-C3 Pins: 21=TX, 20=RX
   Serial1.begin(19200, SERIAL_8N1, 20, 21);
   Serial1.setTimeout(50); 
   
   pinMode(AUDIO_PIN_POSITIVE, OUTPUT);
   pinMode(AUDIO_PIN_NEGATIVE, OUTPUT);
-  
+  pinMode(BATTERY_PIN, INPUT); // Set Pin 4 as input
+
   bleKeyboard.begin();
   NimBLEDevice::setPower(ESP_PWR_LVL_P9); 
   
   delay(500);
-  beep(); // Confirm boot
+  updateBatteryLevel(); // Initial check
+  beep(); 
 }
 
 void loop() {
+  // Check battery every 60 seconds
+  if (millis() - last_battery_check > 60000) {
+    updateBatteryLevel();
+    last_battery_check = millis();
+  }
+
   State next_state = current_state;
   
   switch (current_state) {
@@ -61,23 +76,19 @@ void loop() {
       byte turn_on_search_command[6] = {0x00, 0x00, 0x03, 0x02, 0x03, 0x02};
       Serial1.write(turn_on_search_command, 6);
       state_time = millis();
-      next_state = SEARCH_FOR_CARD; // Jump straight to searching
+      next_state = SEARCH_FOR_CARD;
       break;
     }
     
     case SEARCH_FOR_CARD: {
-      // Reduced delay to 20ms - just enough for the radio to settle
       if (millis() - state_time > 20) { 
         if (Serial1.available() >= 5) {
           byte res[20];
           int len = Serial1.readBytes(res, 20);
-          
           for(int i = 0; i < len - 5; i++) {
             if (res[i+2] == 0x11) {
               byte current_uid[8];
               memcpy(current_uid, &res[i+5], 8);
-              
-              // Reduced re-scan lockout to 500ms for rapid scanning
               if (memcmp(current_uid, last_uid, 8) != 0 || (millis() - last_scan_time > 200)) {
                 memcpy(uid, current_uid, 8);
                 memcpy(last_uid, current_uid, 8);
@@ -88,7 +99,6 @@ void loop() {
           }
         }
       }
-      // Faster refresh of the search command
       if ((millis() - state_time) > 800) next_state = TURN_ON_CARD_SEARCH_COMMAND;
       break;
     }
@@ -123,33 +133,46 @@ void loop() {
     }
     
     case KEYBOARD_OUTPUT: {
-      beep(); // Buzz to show the scan was successful
-      
+      beep(); 
       if (bleKeyboard.isConnected()) {
-        delay(300); // Give PC/Laptop time to focus
+        delay(300); 
         for(int i = 0; i < readable_string_length; i++) {
           bleKeyboard.write(serial_number[i]);
-          delay(20); // Safe typing speed
+          delay(20); 
         }
         bleKeyboard.write(KEY_RETURN);
       }
-      
       last_scan_time = millis();
-      delay(100); // Short cooldown
+      delay(100); 
       next_state = TURN_ON_CARD_SEARCH_COMMAND;
       break;
     }
   }
   
   current_state = next_state;
-  delay(10); // Prevent CPU "spinning" too fast
+  delay(10); 
 }
 
-// --- DO NOT REMOVE THESE FUNCTIONS ---
+// --- Battery Logic ---
+void updateBatteryLevel() {
+  // Read ADC (0 to 4095 on ESP32-C3)
+  int raw = analogRead(BATTERY_PIN);
+  
+  // Note: This math assumes a 1:1 voltage divider (two equal resistors)
+  // If no divider is used, voltage = (raw / 4095.0) * 3.3
+  float voltage = (raw / 4095.0) * 3.3 * 2.0; 
 
-void ClearSerial() {
-  while (Serial1.available() > 0) Serial1.read();
+  // Convert voltage to percentage
+  int percentage = map(voltage * 100, min_battery_voltage * 100, max_battery_voltage * 100, 0, 100);
+  percentage = constrain(percentage, 0, 100);
+
+  if (bleKeyboard.isConnected()) {
+    bleKeyboard.setBatteryLevel(percentage);
+  }
 }
+
+// --- Helper Functions ---
+void ClearSerial() { while (Serial1.available() > 0) Serial1.read(); }
 
 int RemoveNonReadableChars(byte *source, int source_len, byte *destination) {
   int length_of_readable_chars = 0;
